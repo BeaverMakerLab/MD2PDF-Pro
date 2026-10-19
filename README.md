@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+  <a href="README.md"><b>简体中文</b></a> | <a href="README_EN.md"><b>English</b></a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python" alt="Python Version">
   <img src="https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows" alt="Platform">
   <img src="https://img.shields.io/badge/Markdown-CommonMark%20%2B%20GFM-orange" alt="Markdown Support">
