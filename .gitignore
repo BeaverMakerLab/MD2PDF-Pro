@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.spec
+
+# User generated PDF files (prevent committing private exports)
+*.pdf
+!example.pdf
+
+# IDE and Editor configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Windows system files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Environment / local configs
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Temporary and test scratch files
+scratch/
+test_*.md
+*.tmp
+*.log
