@@ -27,10 +27,19 @@ from tkinterdnd2 import TkinterDnD, DND_FILES
 # 路径与排版常量字典
 # ==============================================================================
 
-TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSETS_DIR = os.path.join(TOOL_DIR, "assets")
-JS_DIR = os.path.join(ASSETS_DIR, "js")
-CONFIG_PATH = os.path.join(TOOL_DIR, "config.json")
+if getattr(sys, "frozen", False):
+    TOOL_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    BUNDLE_DIR = getattr(sys, "_MEIPASS", TOOL_DIR)
+    ASSETS_DIR = os.path.join(BUNDLE_DIR, "assets")
+    if not os.path.exists(ASSETS_DIR):
+        ASSETS_DIR = os.path.join(TOOL_DIR, "assets")
+    JS_DIR = os.path.join(ASSETS_DIR, "js")
+    CONFIG_PATH = os.path.join(TOOL_DIR, "config.json")
+else:
+    TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
+    ASSETS_DIR = os.path.join(TOOL_DIR, "assets")
+    JS_DIR = os.path.join(ASSETS_DIR, "js")
+    CONFIG_PATH = os.path.join(TOOL_DIR, "config.json")
 
 # 中文出版与 Word 标准字号与磅值 (pt) 映射表
 FONT_SIZE_MAP = {
