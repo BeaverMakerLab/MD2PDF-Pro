@@ -15,6 +15,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/BeaverMakerLab/MD2PDF-Pro/releases/latest">
+    <img src="https://img.shields.io/badge/Download-Windows%20x64%20Portable%20%EF%BC%88免安装绿色版%EF%BC%89-success?style=for-the-badge&logo=windows" alt="Download Windows Portable">
+  </a>
+</p>
+
+<p align="center">
   <img src="assets/ui_preview.png" alt="MD2PDF Pro 工作台界面预览" width="850">
 </p>
 
@@ -94,17 +100,25 @@
 
 ## 🚀 快速上手
 
-### 方式一：快捷运行（推荐）
+### 方式一：下载免安装便携版（小白与非技术人员推荐 · 无需安装 Python）
+
+1. 直接前往 [GitHub Releases](https://github.com/BeaverMakerLab/MD2PDF-Pro/releases/latest) 下载预打包的 **`MD2PDF-Pro-v1.0.0-windows-x64.zip`** 压缩包；
+2. 解压到本地任意文件夹；
+3. 直接双击运行目录下的 **`MD2PDF-Pro.exe`** 即可开启工作台！
+
+---
+
+### 方式二：克隆源码快捷双击启动
 
 1. 下载或克隆本项目至本地：
    ```bash
    git clone https://github.com/BeaverMakerLab/MD2PDF-Pro.git
    ```
-2. 双击项目根目录下的 **`【启动 MD2PDF Pro】.bat`** 即可立即启动工作台。
+2. 双击项目根目录下的 **`【启动 MD2PDF Pro】.bat`** 即可拉起应用。
 
 ---
 
-### 方式二：源码运行
+### 方式三：终端纯净源码运行
 
 确保本地已安装 Python 3.10 或更高版本：
 
