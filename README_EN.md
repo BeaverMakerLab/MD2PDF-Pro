@@ -1,7 +1,7 @@
-# MD2PDF Pro · Professional Markdown to PDF Publishing Workbench
+# MD2PDF Pro · Professional Markdown to PDF & Word Publishing Workbench
 
 <p align="center">
-  <strong>The Open-Source Publishing Workbench for AI Deliverables · Transform LLM Markdown into Executive-Ready, Publication-Grade PDFs in One Click</strong>
+  <strong>The Open-Source Publishing Workbench for AI Deliverables · Transform LLM Markdown into Executive-Ready, Publication-Grade PDFs & Word Documents in One Click</strong>
 </p>
 
 <p align="center">
@@ -11,6 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python" alt="Python Version">
   <img src="https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows" alt="Platform">
+  <img src="https://img.shields.io/badge/Export-PDF%20%2B%20Word%20(.docx)-blueviolet" alt="Dual Format Export">
   <img src="https://img.shields.io/badge/Markdown-CommonMark%20%2B%20GFM-orange" alt="Markdown Support">
   <img src="https://img.shields.io/badge/Math-KaTeX%20Offline-9cf" alt="Math Support">
   <img src="https://img.shields.io/badge/Diagrams-Mermaid%20Offline-ff69b4" alt="Diagrams Support">
@@ -71,10 +72,20 @@ This repository includes a comprehensive demo document [`example.md`](example.md
 
 ## ✨ Key Highlights
 
-### 1. 🛡️ 100% Local, Offline & Privacy-First
+### 1. 📄 Dual-Format Native Export (PDF + Word .docx)
+- **Flexible Export Choice**: Single-click selection between "Export PDF", "Export Word (.docx)", or "Export Both (PDF + Word)" to seamlessly serve both executive reporting and team co-authoring workflows.
+- **High-Fidelity Word (.docx) Generation**:
+  - Full H1~H6 typographic hierarchy with customizable centered or left H1 alignment.
+  - Professional tables with accent header backgrounds, custom borders, and zebra row striping—eliminating broken Markdown tables forever.
+  - 1x1 styled code cards (monospace `Consolas`, accent left indicator bar, and light gray background).
+  - Task checkboxes (`☑` / `☐`) and callout quote cards with colored vertical bars.
+  - Dynamic native Word page number field codes (`Page X of Y`), ensuring page numbers auto-update if edited later in Microsoft Word or WPS!
+- **Vector-Grade Embedded Diagrams & Math**: Flowcharts and complex display formulas are rendered at 2x Retina clarity and embedded into the `.docx` document. **100% standalone—no MS Word or WPS installation required on the host system**!
+
+### 2. 🛡️ 100% Local, Offline & Privacy-First
 - **Data Never Leaves Your Machine**: Leverages your local pre-installed Chromium pipeline (automatically discovers Windows Microsoft Edge or Google Chrome) for silent headless printing. **Zero network telemetry, zero cloud uploads**, fully compliant with strict corporate and government security audits.
 
-### 2. 🎨 Finely Tuned Publication Aesthetics
+### 3. 🎨 Finely Tuned Publication Aesthetics
 - **Three Curated Themes**:
   - **Tech Blue (Default & Recommended)**: Designed for digital transformation whitepapers, technical proposals, and executive briefings.
   - **Government / Formal Style**: Traditional red-black color scheme with standard 2-character Chinese paragraph indentation.
@@ -82,21 +93,21 @@ This repository includes a comprehensive demo document [`example.md`](example.md
 - **Word-Style Typographic Controls**: Standard typographic font sizing (e.g., 12pt, 14pt, 16pt), eliminating confusing unitless sliders.
 - **Layout & Widow Prevention**: Instant Portrait / Landscape switching, customizable margins, and H1 heading alignment with `page-break-after: avoid` to prevent orphan headings at page bottoms.
 
-### 3. 📐 100% CommonMark & GFM Support
+### 4. 📐 100% CommonMark & GFM Support
 - **Robust Table Rendering**: Auto column balancing, word-wrap wrapping, and zebra striping.
 - **Offline LaTeX Math (Built-in KaTeX 0.16)**: Inline `$E=mc^2$` and display math `$$\int f(x)dx$$` rendered natively as vector graphics.
 - **Offline Mermaid Diagrams (Built-in Mermaid 10.9)**: Directly write flowcharts, sequence diagrams, class diagrams, state diagrams, and Gantt charts without internet access.
 - **Rich Extensions**: Task list checkboxes (`- [ ]` / `- [x]`), strikethrough (`~~text~~`), table of contents (`[TOC]`), footnotes (`[^1]`), and native raw HTML tags.
 
-### 4. 📑 Batch Processing & Multi-Chapter Merging
-- **Batch Independent Conversion**: Drop in dozens of Markdown files or entire directories to export separate individual PDFs simultaneously.
+### 5. 📑 Batch Processing & Multi-Chapter Merging
+- **Batch Independent Conversion**: Drop in dozens of Markdown files or entire directories to export separate individual PDFs / Word docs simultaneously.
 - **Ordered Merge into a Single Book**: Reorder chapters with simple Up/Down controls to bind multiple standalone files into a unified long report.
 
-### 5. 🔒 Enterprise-Grade Formal Elements
+### 6. 🔒 Enterprise-Grade Formal Elements
 - **Anti-Leak Diagonal Watermarks**: Customizable text with scalable font sizes (14pt to 40pt) and dynamic SVG tile rotation to prevent edge clipping.
 - **Formal Headers, Footers & Pagination**: Dynamic `Page X of Y` page numbering with smart cover page suppression.
 
-### 6. 🖥️ Modern Windows High-DPI Adaptation
+### 7. 🖥️ Modern Windows High-DPI Adaptation
 - **Native TkDND Drag-and-Drop**: Built on native Windows OLE drag-and-drop protocols. Drag single files, multiple files, or whole folders with zero crash risk.
 - **High-DPI Font Compensation**: Dynamic pixel scaling for 2.5K / 4K monitors (150% ~ 200% scaling), ensuring crisp, easily readable UI fonts.
 

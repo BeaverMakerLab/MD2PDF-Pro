@@ -1,7 +1,7 @@
-# MD2PDF Pro · 专业级 Markdown 转 PDF 排版工作台
+# MD2PDF Pro · 专业级 Markdown 转 PDF / Word 排版工作台
 
 <p align="center">
-  <strong>面向 AI 时代交付物的开源专业排版工具 · 让大模型输出的 Markdown 一秒蜕变为出版级高管汇报 PDF</strong>
+  <strong>面向 AI 时代交付物的开源专业排版工具 · 让大模型输出的 Markdown 一秒蜕变为出版级高管汇报 PDF / Word</strong>
 </p>
 
 <p align="center">
@@ -11,6 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python" alt="Python Version">
   <img src="https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows" alt="Platform">
+  <img src="https://img.shields.io/badge/Export-PDF%20%2B%20Word%20(.docx)-blueviolet" alt="Dual Format Export">
   <img src="https://img.shields.io/badge/Markdown-CommonMark%20%2B%20GFM-orange" alt="Markdown Support">
   <img src="https://img.shields.io/badge/Math-KaTeX%20Offline-9cf" alt="Math Support">
   <img src="https://img.shields.io/badge/Diagrams-Mermaid%20Offline-ff69b4" alt="Diagrams Support">
@@ -71,10 +72,20 @@
 
 ## ✨ 核心特性
 
-### 1. 🛡️ 100% 本地离线 & 隐私安全
+### 1. 📄 双格式原生导出（PDF + Word .docx）
+- **灵活导出选项**：界面一键选择「仅导出 PDF」、「仅导出 Word (.docx)」或「同时导出 (PDF + Word)」，满足汇报审阅与二次协作全场景。
+- **高保真 Word 排版还原**：
+  - 规范中文标题（H1~H6）层级与配色，一级标题居中/居左随心选择；
+  - 商务浅蓝表头、细灰边框与隔行斑马纹表格，彻底解决 Markdown 表格粘贴到 Word 错位变形的顽疾；
+  - 1x1 独立代码卡片（等宽 Consolas 字体、科技蓝左侧高亮饰条、浅灰背景）；
+  - 任务清单复选框（`☑` / `☐`）与引用块蓝条卡片；
+  - 正规 Word 动态页码域代码（第 X 页 / 共 Y 页），后续继续编辑 Word 文档页码自动实时联动！
+- **Mermaid 架构图与公式矢量内嵌**：架构图与复杂 LaTeX display 公式自动渲染为 2x Retina 高清图内嵌至 Word 文档中，**无需电脑安装 MS Word 或 WPS 即可 100% 独立离线生成**！
+
+### 2. 🛡️ 100% 本地离线 & 隐私安全
 - **数据永不出机**：直接调度本地已有 Chromium 内核（自动识别 Windows 自带的 Microsoft Edge 或 Chrome）静默渲染，**绝不进行任何云端数据上传与网络遥测**，满足政府、金融及大型企业严苛的保密审计标准。
 
-### 2. 🎨 经深度调优的出版级排版审美
+### 3. 🎨 经深度调优的出版级排版审美
 - **三大预设风格一键切换**：
   - **政企科技蓝（默认推荐）**：专为数字化转型方案、技术白皮书设计，表头浅蓝衬底、紫调行内代码、典雅层级标题。
   - **严谨公文风（仿宋·红黑·首行缩进）**：严格遵循公文规范排版，仿宋体正文、红黑配色、标准首行两字符缩进。
@@ -82,21 +93,21 @@
 - **Word 经典字号体系**：采用熟悉的初号、小初、一号、小四（12pt）、五号等规范字号，告别反人类的无单位数字滑块。
 - **版式与防孤行优化**：纸张纵横向自由切换、页边距三档适配，一级标题支持居中/居左并内置 `page-break-after: avoid` 防跨页落单。
 
-### 3. 📐 CommonMark + GFM 规范 100% 深度支持
+### 4. 📐 CommonMark + GFM 规范 100% 深度支持
 - **专业级 GFM 表格**：自动计算列宽防溢出、科技蓝专属表头、斑马纹隔行换色、单元格换行防截断。
 - **离线 LaTeX 数学公式（内置 KaTeX 0.16）**：行内公式 `$E=mc^2$` 与块级大公式 `$$\int f(x)dx$$` 全本地矢量渲染，打印放大无锯齿。
 - **离线 Mermaid 架构图（内置 Mermaid 10.9）**：直接在 Markdown 内使用 ````mermaid 编写流程图、时序图、架构图、甘特图，无需联网直接出图。
 - **丰富扩展语法**：任务清单复选框（`- [ ]` / `- [x]`）、删除线（`~~text~~`）、文档目录（`[TOC]`）、脚注尾注（`[^1]`）、原生 HTML 标签混排。
 
-### 4. 📑 批量并行处理与长篇报告合并
-- **批量独立转换**：拖入几十篇文档或整个文件夹，一次性自动输出对应独立 PDF。
+### 5. 📑 批量并行处理与长篇报告合并
+- **批量独立转换**：拖入几十篇文档或整个文件夹，一次性自动输出对应独立 PDF / Word。
 - **多章合并为单本大报告**：支持自由上下拖拽调整次序，将多篇散落的 Markdown 章节自动拼接，合成为一本装订成册的单一长篇白皮书。
 
-### 5. 🔒 企业级正式要素支持
+### 6. 🔒 企业级正式要素支持
 - **防泄密倾斜平铺水印**：支持自定义文字、字号自适应调节（14pt ~ 40pt），动态 SVG 瓦片中心旋转算法，杜绝文字溢出截断。
 - **公文级页眉页脚与页码**：支持页眉密级/组织标示，页脚自动计算 `第 X 页 / 共 Y 页`，首页支持智能免除页码。
 
-### 6. 🖥️ 现代化高分屏 DPI 自适应体验
+### 7. 🖥️ 现代化高分屏 DPI 自适应体验
 - **原生 TkDND 拖拽**：基于 Windows 原生 OLE 拖放接口，无论单文件、多文件还是整个文件夹，直接拖入窗口即完成识别，零底层崩溃风险。
 - **高分屏大字号适配**：自动识别 2.5K / 4K 150%~200% 缩放比，左侧大工作区与超大文件列表文字，清晰易读。
 

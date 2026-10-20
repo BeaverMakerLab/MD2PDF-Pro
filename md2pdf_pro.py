@@ -23,6 +23,16 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinterdnd2 import TkinterDnD, DND_FILES
 
+import docx
+from docx import Document
+from docx.shared import Pt, Inches, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from docx.enum.section import WD_ORIENT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from bs4 import BeautifulSoup, NavigableString, Tag
+
 # ==============================================================================
 # 路径与排版常量字典
 # ==============================================================================
@@ -170,6 +180,7 @@ PRESET_THEMES = {
 
 DEFAULT_CONFIG = {
     "output_mode": "separate",
+    "export_format": "pdf",
     "last_output_dir": "",
     "preset": "tech_blue",
     "page_orientation": "portrait",
@@ -830,6 +841,757 @@ def convert_merged_files(md_paths, out_pdf_path, config=None):
 
 
 # ==============================================================================
+# Word (.docx) 原生高保真排版生成引擎
+# ==============================================================================
+
+def hex_to_rgb(hex_str, default=(43, 108, 176)):
+    if not hex_str:
+        return RGBColor(*default)
+    s = hex_str.lstrip('#')
+    if len(s) == 3:
+        s = ''.join([c*2 for c in s])
+    if len(s) == 6:
+        try:
+            return RGBColor(int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+        except ValueError:
+            pass
+    return RGBColor(*default)
+
+def set_run_font(run, font_name="Microsoft YaHei", size_pt=12.0, color_rgb=None, bold=False, italic=False, strike=False, superscript=False):
+    run.font.name = font_name
+    rPr = run._r.get_or_add_rPr()
+    rFonts = rPr.get_or_add_rFonts()
+    rFonts.set(qn('w:eastAsia'), font_name)
+    rFonts.set(qn('w:ascii'), font_name)
+    rFonts.set(qn('w:hAnsi'), font_name)
+    if size_pt:
+        run.font.size = Pt(size_pt)
+    if color_rgb:
+        run.font.color.rgb = color_rgb
+    if bold:
+        run.font.bold = True
+    if italic:
+        run.font.italic = True
+    if strike:
+        run.font.strike = True
+    if superscript:
+        run.font.superscript = True
+
+def set_cell_background(cell, hex_color):
+    tcPr = cell._tc.get_or_add_tcPr()
+    for child in list(tcPr):
+        if child.tag.endswith('shd'):
+            tcPr.remove(child)
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:color'), 'auto')
+    shd.set(qn('w:fill'), hex_color.lstrip('#'))
+    tcPr.append(shd)
+
+def set_cell_borders(cell, top=None, bottom=None, left=None, right=None):
+    tcPr = cell._tc.get_or_add_tcPr()
+    for child in list(tcPr):
+        if child.tag.endswith('tcBorders'):
+            tcPr.remove(child)
+    tcBorders = OxmlElement('w:tcBorders')
+    borders = {'top': top, 'bottom': bottom, 'left': left, 'right': right}
+    for edge, border_args in borders.items():
+        if border_args is not None:
+            el = OxmlElement(f'w:{edge}')
+            for k, v in border_args.items():
+                el.set(qn(f'w:{k}'), str(v))
+            tcBorders.append(el)
+    tcPr.append(tcBorders)
+
+def set_cell_margins(cell, top=100, bottom=100, left=140, right=140):
+    tcPr = cell._tc.get_or_add_tcPr()
+    for child in list(tcPr):
+        if child.tag.endswith('tcMar'):
+            tcPr.remove(child)
+    tcMar = OxmlElement('w:tcMar')
+    for m, val in [('top', top), ('bottom', bottom), ('left', left), ('right', right)]:
+        node = OxmlElement(f'w:{m}')
+        node.set(qn('w:w'), str(val))
+        node.set(qn('w:type'), 'dxa')
+        tcMar.append(node)
+    tcPr.append(tcMar)
+
+def add_docx_field(p, field_name, font_name="Microsoft YaHei", size_pt=8.5, color_rgb=None):
+    run = p.add_run()
+    r = run._r
+    fldChar1 = OxmlElement('w:fldChar')
+    fldChar1.set(qn('w:fldCharType'), 'begin')
+    instrText = OxmlElement('w:instrText')
+    instrText.set(qn('xml:space'), 'preserve')
+    instrText.text = field_name
+    fldChar2 = OxmlElement('w:fldChar')
+    fldChar2.set(qn('w:fldCharType'), 'separate')
+    fldChar3 = OxmlElement('w:fldChar')
+    fldChar3.set(qn('w:fldCharType'), 'end')
+    r.append(fldChar1)
+    r.append(instrText)
+    r.append(fldChar2)
+    r.append(fldChar3)
+    set_run_font(run, font_name=font_name, size_pt=size_pt, color_rgb=color_rgb or RGBColor(0x71, 0x80, 0x96))
+
+def render_html_to_docx(full_html, output_docx_path, config, doc_title="", md_dir=""):
+    """将经过预处理的 HTML 及其渲染组件转换为高保真专业 Word (.docx) 文档"""
+    has_mermaid = bool(re.search(r'class=["\']mermaid["\']', full_html))
+    has_katex = bool("katex" in full_html or "$$" in full_html)
+
+    temp_images = []
+    processed_html = full_html
+
+    # 若含有 Mermaid 架构图或 KaTeX 复杂公式，调度 Chromium 进行 2x Retina 截图
+    if has_mermaid or has_katex:
+        browser_exe = find_browser()
+        if browser_exe:
+            tmp_html = os.path.join(tempfile.gettempdir(), f"_md2docx_{os.getpid()}_{abs(hash(doc_title)) % 100000}.html")
+            try:
+                from playwright.sync_api import sync_playwright
+                with open(tmp_html, "w", encoding="utf-8") as f:
+                    f.write(full_html)
+
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(executable_path=browser_exe, headless=True)
+                    page = browser.new_page(device_scale_factor=2)
+                    page.goto("file:///" + tmp_html.replace("\\", "/"), wait_until="load")
+                    page.wait_for_timeout(900)
+
+                    # 截图所有 Mermaid
+                    mm_locs = page.locator(".mermaid").all()
+                    mm_list = []
+                    for i, el in enumerate(mm_locs):
+                        img_p = os.path.join(tempfile.gettempdir(), f"_mm_docx_{os.getpid()}_{i}.png").replace("\\", "/")
+                        el.screenshot(path=img_p)
+                        mm_list.append(img_p)
+                        temp_images.append(img_p)
+
+                    # 截图所有 KaTeX display 块级公式
+                    kd_locs = page.locator(".katex-display").all()
+                    kd_list = []
+                    for i, el in enumerate(kd_locs):
+                        img_p = os.path.join(tempfile.gettempdir(), f"_kd_docx_{os.getpid()}_{i}.png").replace("\\", "/")
+                        el.screenshot(path=img_p)
+                        kd_list.append(img_p)
+                        temp_images.append(img_p)
+
+                    # 在浏览器 DOM 中替换为对应图片与行内公式
+                    page.evaluate('''data => {
+                        document.querySelectorAll('.mermaid').forEach((el, i) => {
+                            if (data.mm[i]) {
+                                const img = document.createElement('img');
+                                img.src = data.mm[i];
+                                img.className = 'rendered-diagram';
+                                el.parentNode.replaceChild(img, el);
+                            }
+                        });
+                        document.querySelectorAll('.katex-display').forEach((el, i) => {
+                            if (data.kd[i]) {
+                                const img = document.createElement('img');
+                                img.src = data.kd[i];
+                                img.className = 'rendered-math';
+                                el.parentNode.replaceChild(img, el);
+                            }
+                        });
+                        document.querySelectorAll('span.katex:not(.katex-display span.katex)').forEach(el => {
+                            const ann = el.querySelector('annotation');
+                            if (ann) {
+                                const textNode = document.createTextNode('$' + ann.textContent + '$');
+                                el.parentNode.replaceChild(textNode, el);
+                            }
+                        });
+                    }''', {'mm': mm_list, 'kd': kd_list})
+
+                    processed_html = page.content()
+                    browser.close()
+            except Exception as e:
+                print(f"Playwright 截图预处理异常: {e}")
+            finally:
+                if os.path.exists(tmp_html):
+                    try:
+                        os.remove(tmp_html)
+                    except Exception:
+                        pass
+
+    try:
+        soup = BeautifulSoup(processed_html, "html.parser")
+        body = soup.find("body") or soup
+
+        doc = Document()
+
+        # 页面尺寸与方向配置
+        section = doc.sections[0]
+        is_landscape = (config.get("page_orientation", "portrait") == "landscape")
+        if is_landscape:
+            section.orientation = WD_ORIENT.LANDSCAPE
+            section.page_width = Inches(11.69)
+            section.page_height = Inches(8.27)
+        else:
+            section.orientation = WD_ORIENT.PORTRAIT
+            section.page_width = Inches(8.27)
+            section.page_height = Inches(11.69)
+
+        margin_key = config.get("page_margin", "standard")
+        if margin_key == "compact":
+            section.top_margin = Inches(0.47)
+            section.bottom_margin = Inches(0.47)
+            section.left_margin = Inches(0.47)
+            section.right_margin = Inches(0.47)
+        elif margin_key == "spacious":
+            section.top_margin = Inches(0.98)
+            section.bottom_margin = Inches(0.98)
+            section.left_margin = Inches(0.87)
+            section.right_margin = Inches(0.87)
+        elif margin_key == "gov":
+            section.top_margin = Inches(1.46)
+            section.bottom_margin = Inches(1.38)
+            section.left_margin = Inches(1.10)
+            section.right_margin = Inches(1.02)
+        else:
+            section.top_margin = Inches(0.79)
+            section.bottom_margin = Inches(0.79)
+            section.left_margin = Inches(0.63)
+            section.right_margin = Inches(0.63)
+
+        content_width_in = (section.page_width.inches - section.left_margin.inches - section.right_margin.inches)
+
+        font_key = config.get("font_family_key", "微软雅黑 (推荐·现代无衬线)")
+        font_name = "Microsoft YaHei"
+        if "仿宋" in font_key:
+            font_name = "FangSong"
+        elif "宋体" in font_key:
+            font_name = "SimSun"
+        elif "楷体" in font_key:
+            font_name = "KaiTi"
+        elif "Consolas" in font_key:
+            font_name = "Consolas"
+
+        base_font_size = parse_font_size(config.get("font_size", "小四 (12 pt)"), 12.0)
+        line_height = parse_line_height(config.get("line_height", "1.65 倍 (推荐)"), 1.65)
+        word_line_spacing = max(1.15, min(1.5, line_height * 0.82))
+        para_spacing = parse_para_spacing(config.get("para_spacing", "标准 (8 pt)"), 8.0)
+        accent_hex = config.get("accent_color", "#2b6cb0")
+        accent_rgb = hex_to_rgb(accent_hex, (43, 108, 176))
+        text_align_justify = config.get("text_align_justify", True)
+        indent_first_line = config.get("indent_first_line", False)
+        h1_align = config.get("h1_align", "center")
+
+        # 页眉页脚
+        if config.get("enable_header", True):
+            h_text = config.get("header_text", "").strip() or doc_title
+            if h_text:
+                header = section.header
+                p_h = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+                p_h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                r_h = p_h.add_run(h_text)
+                set_run_font(r_h, font_name=font_name, size_pt=8.5, color_rgb=RGBColor(0x71, 0x80, 0x96))
+
+        if config.get("enable_footer", True):
+            footer = section.footer
+            p_f = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+            p_f.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            r1 = p_f.add_run("第 ")
+            set_run_font(r1, font_name=font_name, size_pt=8.5, color_rgb=RGBColor(0x71, 0x80, 0x96))
+            add_docx_field(p_f, "PAGE", font_name=font_name, size_pt=8.5)
+            r2 = p_f.add_run(" 页 / 共 ")
+            set_run_font(r2, font_name=font_name, size_pt=8.5, color_rgb=RGBColor(0x71, 0x80, 0x96))
+            add_docx_field(p_f, "NUMPAGES", font_name=font_name, size_pt=8.5)
+            r3 = p_f.add_run(" 页")
+            set_run_font(r3, font_name=font_name, size_pt=8.5, color_rgb=RGBColor(0x71, 0x80, 0x96))
+
+        if config.get("suppress_first_page", True):
+            section.different_first_page_header_footer = True
+
+        def process_inline(paragraph, node, inherit_bold=False, inherit_italic=False, inherit_color=None, inherit_size=None):
+            if isinstance(node, NavigableString):
+                text = str(node)
+                if text:
+                    run = paragraph.add_run(text)
+                    set_run_font(
+                        run,
+                        font_name=font_name,
+                        size_pt=inherit_size or base_font_size,
+                        color_rgb=inherit_color or RGBColor(0x2D, 0x37, 0x48),
+                        bold=inherit_bold,
+                        italic=inherit_italic
+                    )
+                return
+
+            if not isinstance(node, Tag):
+                return
+
+            tag_name = node.name.lower()
+
+            if tag_name in ["strong", "b"]:
+                for child in node.children:
+                    process_inline(paragraph, child, inherit_bold=True, inherit_italic=inherit_italic, inherit_color=inherit_color, inherit_size=inherit_size)
+            elif tag_name in ["em", "i"]:
+                for child in node.children:
+                    process_inline(paragraph, child, inherit_bold=inherit_bold, inherit_italic=True, inherit_color=inherit_color, inherit_size=inherit_size)
+            elif tag_name == "code":
+                code_text = node.get_text()
+                run = paragraph.add_run(f" {code_text} ")
+                set_run_font(
+                    run,
+                    font_name="Consolas",
+                    size_pt=round((inherit_size or base_font_size) * 0.90, 1),
+                    color_rgb=RGBColor(0x80, 0x5A, 0xD5),
+                    bold=False,
+                    italic=False
+                )
+            elif tag_name in ["del", "s", "strike"]:
+                for child in node.children:
+                    text = child.get_text() if isinstance(child, Tag) else str(child)
+                    run = paragraph.add_run(text)
+                    set_run_font(
+                        run,
+                        font_name=font_name,
+                        size_pt=inherit_size or base_font_size,
+                        color_rgb=RGBColor(0xA0, 0xAE, 0xC0),
+                        bold=inherit_bold,
+                        italic=inherit_italic,
+                        strike=True
+                    )
+            elif tag_name == "a":
+                link_text = node.get_text()
+                run = paragraph.add_run(link_text)
+                set_run_font(
+                    run,
+                    font_name=font_name,
+                    size_pt=inherit_size or base_font_size,
+                    color_rgb=accent_rgb,
+                    bold=inherit_bold,
+                    italic=inherit_italic
+                )
+                run.font.underline = True
+            elif tag_name == "sup":
+                sup_text = node.get_text()
+                run = paragraph.add_run(sup_text)
+                set_run_font(
+                    run,
+                    font_name=font_name,
+                    size_pt=round((inherit_size or base_font_size) * 0.8, 1),
+                    color_rgb=RGBColor(0x71, 0x80, 0x96),
+                    superscript=True
+                )
+            elif tag_name == "input" and node.get("type") == "checkbox":
+                checked = node.has_attr("checked")
+                box_char = "☑ " if checked else "☐ "
+                run = paragraph.add_run(box_char)
+                set_run_font(
+                    run,
+                    font_name="Segoe UI Symbol" if os.name == "nt" else font_name,
+                    size_pt=inherit_size or base_font_size,
+                    color_rgb=accent_rgb if checked else RGBColor(0xA0, 0xAE, 0xC0),
+                    bold=True
+                )
+            elif tag_name == "img":
+                src = node.get("src", "")
+                if src:
+                    img_path = None
+                    if os.path.isabs(src) and os.path.exists(src):
+                        img_path = src
+                    elif md_dir and os.path.exists(os.path.join(md_dir, src)):
+                        img_path = os.path.join(md_dir, src)
+
+                    if img_path and os.path.exists(img_path):
+                        try:
+                            run = paragraph.add_run()
+                            max_w = min(content_width_in, 6.0)
+                            run.add_picture(img_path, width=Inches(max_w))
+                        except Exception as e:
+                            print(f"插入行内图片失败: {e}")
+            elif tag_name == "br":
+                paragraph.add_run().add_break()
+            else:
+                for child in node.children:
+                    process_inline(paragraph, child, inherit_bold=inherit_bold, inherit_italic=inherit_italic, inherit_color=inherit_color, inherit_size=inherit_size)
+
+        for elem in body.children:
+            if isinstance(elem, NavigableString):
+                if not elem.strip():
+                    continue
+                p = doc.add_paragraph()
+                p.paragraph_format.line_spacing = word_line_spacing
+                p.paragraph_format.space_after = Pt(para_spacing)
+                r = p.add_run(str(elem).strip())
+                set_run_font(r, font_name=font_name, size_pt=base_font_size)
+                continue
+
+            if not isinstance(elem, Tag):
+                continue
+
+            tag = elem.name.lower()
+
+            if tag in ["script", "style", "meta", "link", "title"]:
+                continue
+
+            # 分页符支持 (长报告章节合并)
+            if tag == "div" and ("docx-page-break" in elem.get("class", []) or "page-break-before: always" in elem.get("style", "")):
+                doc.add_page_break()
+                continue
+
+            # 1. 标题 H1 ~ H6
+            if tag in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+                level = int(tag[1])
+                p = doc.add_paragraph()
+                p.paragraph_format.keep_with_next = True
+
+                if level == 1:
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(14)
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER if h1_align == "center" else WD_ALIGN_PARAGRAPH.LEFT
+                    h_size = round(base_font_size * 1.55, 1)
+                    for child in elem.children:
+                        process_inline(p, child, inherit_bold=True, inherit_color=RGBColor(0x1A, 0x20, 0x2C), inherit_size=h_size)
+                elif level == 2:
+                    p.paragraph_format.space_before = Pt(16)
+                    p.paragraph_format.space_after = Pt(6)
+                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    h_size = round(base_font_size * 1.25, 1)
+                    for child in elem.children:
+                        process_inline(p, child, inherit_bold=True, inherit_color=accent_rgb, inherit_size=h_size)
+                elif level == 3:
+                    p.paragraph_format.space_before = Pt(12)
+                    p.paragraph_format.space_after = Pt(4)
+                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    h_size = round(base_font_size * 1.10, 1)
+                    for child in elem.children:
+                        process_inline(p, child, inherit_bold=True, inherit_color=RGBColor(0x2D, 0x37, 0x48), inherit_size=h_size)
+                else:
+                    p.paragraph_format.space_before = Pt(8)
+                    p.paragraph_format.space_after = Pt(3)
+                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    h_size = base_font_size
+                    for child in elem.children:
+                        process_inline(p, child, inherit_bold=True, inherit_color=RGBColor(0x4A, 0x55, 0x68), inherit_size=h_size)
+
+            # 2. 独立图片或图表/公式
+            elif tag == "img" or (elem.find("img", class_=["rendered-diagram", "rendered-math"])):
+                rendered_img = elem if tag == "img" else elem.find("img", class_=["rendered-diagram", "rendered-math"])
+                src = rendered_img.get("src", "")
+                img_path = None
+                if os.path.isabs(src) and os.path.exists(src):
+                    img_path = src
+                elif md_dir and os.path.exists(os.path.join(md_dir, src)):
+                    img_path = os.path.join(md_dir, src)
+
+                if img_path and os.path.exists(img_path):
+                    p = doc.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.paragraph_format.space_before = Pt(8)
+                    p.paragraph_format.space_after = Pt(12)
+                    try:
+                        is_math = "rendered-math" in rendered_img.get("class", [])
+                        max_w = min(content_width_in, 5.8) if not is_math else min(content_width_in * 0.7, 4.5)
+                        p.add_run().add_picture(img_path, width=Inches(max_w))
+                    except Exception as e:
+                        print(f"插入图片异常: {e}")
+
+            # 3. 普通段落 <p>
+            elif tag == "p":
+                p = doc.add_paragraph()
+                p.paragraph_format.line_spacing = word_line_spacing
+                p.paragraph_format.space_after = Pt(para_spacing)
+                if indent_first_line:
+                    p.paragraph_format.first_line_indent = Pt(base_font_size * 2)
+                if text_align_justify:
+                    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                else:
+                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+                for child in elem.children:
+                    process_inline(p, child)
+
+            # 4. 引用块 <blockquote> (专业科技蓝条卡片)
+            elif tag == "blockquote":
+                tbl = doc.add_table(rows=1, cols=1)
+                tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+                tbl.autofit = False
+                cell = tbl.cell(0, 0)
+                cell.width = Inches(content_width_in)
+
+                set_cell_background(cell, "F7FAFC")
+                set_cell_borders(cell,
+                    left={'val': 'single', 'sz': '24', 'space': '0', 'color': accent_hex.lstrip('#')},
+                    top={'val': 'none'},
+                    bottom={'val': 'none'},
+                    right={'val': 'none'}
+                )
+                set_cell_margins(cell, top=120, bottom=120, left=180, right=180)
+
+                first_p = True
+                for b_child in elem.children:
+                    if isinstance(b_child, Tag) and b_child.name.lower() == "p":
+                        p = cell.paragraphs[0] if first_p else cell.add_paragraph()
+                        first_p = False
+                        p.paragraph_format.line_spacing = word_line_spacing
+                        p.paragraph_format.space_after = Pt(4)
+                        for c in b_child.children:
+                            process_inline(p, c, inherit_italic=False, inherit_color=RGBColor(0x4A, 0x55, 0x68), inherit_size=round(base_font_size * 0.95, 1))
+                    elif isinstance(b_child, NavigableString) and b_child.strip():
+                        p = cell.paragraphs[0] if first_p else cell.add_paragraph()
+                        first_p = False
+                        p.paragraph_format.line_spacing = word_line_spacing
+                        p.paragraph_format.space_after = Pt(4)
+                        r = p.add_run(str(b_child).strip())
+                        set_run_font(r, font_name=font_name, size_pt=round(base_font_size * 0.95, 1), color_rgb=RGBColor(0x4A, 0x55, 0x68))
+
+                p_spacer = doc.add_paragraph()
+                p_spacer.paragraph_format.space_before = Pt(0)
+                p_spacer.paragraph_format.space_after = Pt(4)
+
+            # 5. 代码块 <pre><code> (1x1 优雅代码卡片)
+            elif tag == "pre":
+                code_elem = elem.find("code")
+                code_text = code_elem.get_text() if code_elem else elem.get_text()
+
+                tbl = doc.add_table(rows=1, cols=1)
+                tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+                tbl.autofit = False
+                cell = tbl.cell(0, 0)
+                cell.width = Inches(content_width_in)
+
+                set_cell_background(cell, "F8FAFC")
+                set_cell_borders(cell,
+                    left={'val': 'single', 'sz': '24', 'space': '0', 'color': accent_hex.lstrip('#')},
+                    top={'val': 'single', 'sz': '4', 'space': '0', 'color': 'E2E8F0'},
+                    bottom={'val': 'single', 'sz': '4', 'space': '0', 'color': 'E2E8F0'},
+                    right={'val': 'single', 'sz': '4', 'space': '0', 'color': 'E2E8F0'}
+                )
+                set_cell_margins(cell, top=140, bottom=140, left=180, right=180)
+
+                code_lines = code_text.splitlines()
+                if not code_lines:
+                    code_lines = [""]
+                for i, cl in enumerate(code_lines):
+                    p = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
+                    p.paragraph_format.line_spacing = 1.15
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    r = p.add_run(cl if cl else " ")
+                    set_run_font(r, font_name="Consolas", size_pt=9.5, color_rgb=RGBColor(0x2D, 0x37, 0x48))
+
+                p_spacer = doc.add_paragraph()
+                p_spacer.paragraph_format.space_before = Pt(0)
+                p_spacer.paragraph_format.space_after = Pt(6)
+
+            # 6. GFM 表格 <table> (淡蓝表头、精细边框、斑马纹)
+            elif tag == "table":
+                rows_data = []
+                for tr in elem.find_all("tr"):
+                    cells = tr.find_all(["th", "td"])
+                    rows_data.append((tr, cells))
+
+                if rows_data:
+                    num_rows = len(rows_data)
+                    num_cols = max(len(c) for _, c in rows_data)
+                    tbl = doc.add_table(rows=num_rows, cols=num_cols)
+                    tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+                    tbl.autofit = False
+
+                    col_w = content_width_in / max(1, num_cols)
+
+                    for r_idx, (tr, cells) in enumerate(rows_data):
+                        row = tbl.rows[r_idx]
+                        is_header = bool(tr.find("th")) or (r_idx == 0)
+
+                        trPr = row._tr.get_or_add_trPr()
+                        cantSplit = OxmlElement('w:cantSplit')
+                        trPr.append(cantSplit)
+                        if is_header:
+                            tblHeader = OxmlElement('w:tblHeader')
+                            trPr.append(tblHeader)
+
+                        for c_idx, cell_elem in enumerate(cells):
+                            if c_idx >= num_cols:
+                                break
+                            cell = row.cells[c_idx]
+                            cell.width = Inches(col_w)
+                            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+                            set_cell_margins(cell, top=100, bottom=100, left=140, right=140)
+                            set_cell_borders(cell,
+                                top={'val': 'single', 'sz': '4', 'space': '0', 'color': 'CBD5E0'},
+                                bottom={'val': 'single', 'sz': '4', 'space': '0', 'color': 'CBD5E0'},
+                                left={'val': 'single', 'sz': '4', 'space': '0', 'color': 'CBD5E0'},
+                                right={'val': 'single', 'sz': '4', 'space': '0', 'color': 'CBD5E0'}
+                            )
+
+                            p = cell.paragraphs[0]
+                            p.paragraph_format.line_spacing = 1.2
+                            p.paragraph_format.space_before = Pt(0)
+                            p.paragraph_format.space_after = Pt(0)
+
+                            align_attr = cell_elem.get("align", "").lower()
+                            if "center" in align_attr:
+                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            elif "right" in align_attr:
+                                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            else:
+                                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+                            if is_header:
+                                set_cell_background(cell, "EBF8FF")
+                                for ch in cell_elem.children:
+                                    process_inline(p, ch, inherit_bold=True, inherit_color=accent_rgb, inherit_size=round(base_font_size * 0.92, 1))
+                            else:
+                                if r_idx % 2 == 0:
+                                    set_cell_background(cell, "F7FAFC")
+                                else:
+                                    set_cell_background(cell, "FFFFFF")
+                                for ch in cell_elem.children:
+                                    process_inline(p, ch, inherit_bold=False, inherit_color=RGBColor(0x2D, 0x37, 0x48), inherit_size=round(base_font_size * 0.92, 1))
+
+                    p_spacer = doc.add_paragraph()
+                    p_spacer.paragraph_format.space_before = Pt(0)
+                    p_spacer.paragraph_format.space_after = Pt(6)
+
+            # 7. 列表 <ul> 与 <ol> (包括任务清单)
+            elif tag in ["ul", "ol"]:
+                is_ordered = (tag == "ol")
+                item_idx = 1
+                for li in elem.find_all("li", recursive=False):
+                    p = doc.add_paragraph()
+                    p.paragraph_format.line_spacing = word_line_spacing
+                    p.paragraph_format.space_after = Pt(3)
+                    p.paragraph_format.left_indent = Inches(0.28)
+
+                    task_checkbox = li.find("input", class_="task-list-checkbox")
+                    if task_checkbox:
+                        checked = task_checkbox.has_attr("checked")
+                        box_char = "☑ " if checked else "☐ "
+                        r_box = p.add_run(box_char)
+                        set_run_font(
+                            r_box,
+                            font_name="Segoe UI Symbol" if os.name == "nt" else font_name,
+                            size_pt=base_font_size,
+                            color_rgb=accent_rgb if checked else RGBColor(0xA0, 0xAE, 0xC0),
+                            bold=True
+                        )
+                        for ch in li.children:
+                            if ch != task_checkbox:
+                                process_inline(p, ch)
+                    elif is_ordered:
+                        r_num = p.add_run(f"{item_idx}. ")
+                        set_run_font(r_num, font_name=font_name, size_pt=base_font_size, bold=True, color_rgb=accent_rgb)
+                        for ch in li.children:
+                            process_inline(p, ch)
+                        item_idx += 1
+                    else:
+                        r_bullet = p.add_run("• ")
+                        set_run_font(r_bullet, font_name=font_name, size_pt=base_font_size, bold=True, color_rgb=accent_rgb)
+                        for ch in li.children:
+                            process_inline(p, ch)
+
+            # 8. 水平分割线 <hr>
+            elif tag == "hr":
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_before = Pt(8)
+                p.paragraph_format.space_after = Pt(12)
+                r = p.add_run("―" * 45)
+                set_run_font(r, font_name="Arial", size_pt=7.5, color_rgb=RGBColor(0xE2, 0xE8, 0xF0))
+
+            # 9. 目录 [TOC]
+            elif tag == "div" and "toc" in elem.get("class", []):
+                p_toc_title = doc.add_paragraph()
+                p_toc_title.paragraph_format.space_before = Pt(4)
+                p_toc_title.paragraph_format.space_after = Pt(6)
+                r_title = p_toc_title.add_run("目录索引")
+                set_run_font(r_title, font_name=font_name, size_pt=round(base_font_size * 1.1, 1), bold=True, color_rgb=accent_rgb)
+
+                for li in elem.find_all("li"):
+                    p = doc.add_paragraph()
+                    p.paragraph_format.line_spacing = 1.2
+                    p.paragraph_format.space_after = Pt(2)
+                    p.paragraph_format.left_indent = Inches(0.20)
+                    r_dot = p.add_run("▸ ")
+                    set_run_font(r_dot, font_name=font_name, size_pt=base_font_size * 0.9, color_rgb=accent_rgb)
+                    for ch in li.children:
+                        process_inline(p, ch, inherit_size=round(base_font_size * 0.95, 1))
+
+            # 10. 脚注区域
+            elif tag == "div" and "footnote" in elem.get("class", []):
+                p_fn_line = doc.add_paragraph()
+                p_fn_line.paragraph_format.space_before = Pt(14)
+                p_fn_line.paragraph_format.space_after = Pt(4)
+                r_line = p_fn_line.add_run("―" * 20)
+                set_run_font(r_line, font_name="Arial", size_pt=7.5, color_rgb=RGBColor(0xCB, 0xD5, 0xE0))
+
+                for li in elem.find_all("li"):
+                    p = doc.add_paragraph()
+                    p.paragraph_format.line_spacing = 1.2
+                    p.paragraph_format.space_after = Pt(2)
+                    p.paragraph_format.left_indent = Inches(0.20)
+                    for ch in li.children:
+                        process_inline(p, ch, inherit_size=round(base_font_size * 0.85, 1), inherit_color=RGBColor(0x71, 0x80, 0x96))
+
+        doc.save(output_docx_path)
+        return output_docx_path
+
+    finally:
+        for p_img in temp_images:
+            if os.path.exists(p_img):
+                try:
+                    os.remove(p_img)
+                except Exception:
+                    pass
+
+
+def convert_single_to_docx(md_path, out_docx_path=None, config=None):
+    if config is None:
+        config = load_config()
+
+    if not os.path.exists(md_path):
+        raise FileNotFoundError(f"文件不存在: {md_path}")
+
+    md_dir = os.path.dirname(os.path.abspath(md_path))
+    base_name = os.path.splitext(os.path.basename(md_path))[0]
+
+    if not out_docx_path:
+        out_docx_path = os.path.join(md_dir, f"{base_name}.docx")
+
+    with open(md_path, "r", encoding="utf-8") as f:
+        md_text = f.read()
+
+    doc_title = base_name
+    for line in md_text.splitlines():
+        if line.startswith("# "):
+            doc_title = line[2:].strip()
+            break
+
+    full_html = markdown_to_html(md_text, md_dir, config, doc_title=doc_title)
+    return render_html_to_docx(full_html, out_docx_path, config, doc_title=doc_title, md_dir=md_dir)
+
+
+def convert_merged_to_docx(md_paths, out_docx_path, config=None):
+    if config is None:
+        config = load_config()
+
+    if not md_paths:
+        raise ValueError("请至少选择一个 Markdown 文件进行合并。")
+
+    merged_md_blocks = []
+    base_dir = os.path.dirname(os.path.abspath(md_paths[0]))
+    main_title = os.path.splitext(os.path.basename(out_docx_path))[0]
+
+    for i, p in enumerate(md_paths):
+        if not os.path.exists(p):
+            continue
+        with open(p, "r", encoding="utf-8") as f:
+            content = f.read()
+        if i > 0:
+            merged_md_blocks.append('\n\n<div class="docx-page-break" style="page-break-before: always;"></div>\n\n')
+        merged_md_blocks.append(content)
+
+    combined_text = "".join(merged_md_blocks)
+    full_html = markdown_to_html(combined_text, base_dir, config, doc_title=main_title)
+    return render_html_to_docx(full_html, out_docx_path, config, doc_title=main_title, md_dir=base_dir)
+
+
+# ==============================================================================
 # 专业级 CustomTkinter 左右双栏工作台 (集成官方 TkDND 原生拖拽)
 # ==============================================================================
 
@@ -855,7 +1617,7 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
-        self.title("MD2PDF Pro · 高清文档转换与排版设计中心")
+        self.title("MD2PDF Pro · 高清文档排版与双格式导出中心 (PDF / Word)")
 
         # 屏幕分辨率动态自适应
         sw, sh = get_screen_metrics()
@@ -883,7 +1645,7 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         lbl_app = ctk.CTkLabel(
             top_bar,
-            text="MD2PDF Pro · 专业级 Markdown 转 PDF 工作台",
+            text="MD2PDF Pro · 专业级 Markdown 转 PDF / Word 工作台",
             font=ctk.CTkFont(family="Microsoft YaHei", size=14, weight="bold"),
             text_color="#ffffff"
         )
@@ -891,7 +1653,7 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         lbl_sub = ctk.CTkLabel(
             top_bar,
-            text="离线图表与公式 | Word 经典字号 | A4 纵横排版 | 批处理与长报告合并",
+            text="双格式原生导出 (PDF + Word) | 离线图表与公式 | 批处理与长报告合并",
             font=ctk.CTkFont(family="Microsoft YaHei", size=11),
             text_color="#bee3f8"
         )
@@ -1037,7 +1799,7 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
         make_btn(tool_row, "移除", self.remove_selected, text_color="#c53030", width=44).pack(side="right", padx=(3, 0))
         make_btn(tool_row, "清空", self.clear_files, text_color="#718096", width=44).pack(side="right", padx=(3, 0))
 
-        # 导出模式与目录配置
+        # 导出模式与格式配置
         mode_box = ctk.CTkFrame(left_col, fg_color="#f8fafc", corner_radius=8, border_width=1, border_color="#e2e8f0")
         mode_box.pack(fill="x", padx=10, pady=(0, 6))
 
@@ -1052,6 +1814,17 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
             height=32
         )
         self.seg_mode.pack(fill="x", padx=10, pady=(0, 6))
+
+        lbl_format = ctk.CTkLabel(mode_box, text="导出格式选择：", font=ctk.CTkFont(family="Microsoft YaHei", size=12, weight="bold"), text_color="#2d3748")
+        lbl_format.pack(anchor="w", padx=10, pady=(2, 4))
+
+        self.seg_format = ctk.CTkSegmentedButton(
+            mode_box,
+            values=["导出 PDF", "导出 Word (.docx)", "同时导出 (PDF + Word)"],
+            font=ctk.CTkFont(family="Microsoft YaHei", size=11),
+            height=32
+        )
+        self.seg_format.pack(fill="x", padx=10, pady=(0, 6))
 
         out_row = ctk.CTkFrame(mode_box, fg_color="transparent")
         out_row.pack(fill="x", padx=10, pady=(0, 8))
@@ -1349,11 +2122,19 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def load_settings_into_ui(self):
         c = self.config
 
-        # 模式与输出目录
+        # 模式与输出格式
         if c.get("output_mode") == "merge":
             self.seg_mode.set("按顺序合并为单一长报告")
         else:
             self.seg_mode.set("分别批量转换 (独立文件)")
+
+        fmt = c.get("export_format", "pdf")
+        if fmt == "docx":
+            self.seg_format.set("导出 Word (.docx)")
+        elif fmt == "both":
+            self.seg_format.set("同时导出 (PDF + Word)")
+        else:
+            self.seg_format.set("导出 PDF")
 
         if c.get("last_output_dir"):
             self.entry_out_dir.insert(0, c.get("last_output_dir"))
@@ -1437,8 +2218,15 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def collect_settings_from_ui(self):
         c = {}
-        # 模式
+        # 模式与输出格式
         c["output_mode"] = "merge" if "合并" in self.seg_mode.get() else "separate"
+        sel_fmt = self.seg_format.get()
+        if "Word" in sel_fmt and "同时" not in sel_fmt:
+            c["export_format"] = "docx"
+        elif "同时" in sel_fmt:
+            c["export_format"] = "both"
+        else:
+            c["export_format"] = "pdf"
         c["last_output_dir"] = self.entry_out_dir.get().strip()
 
         # 页面与版式
@@ -1690,6 +2478,7 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _worker_convert(self, cfg, custom_out_dir):
         mode = cfg.get("output_mode", "separate")
+        export_format = cfg.get("export_format", "pdf")
         success_count = 0
         last_out = None
         error_msg = None
@@ -1699,37 +2488,56 @@ class ModernMD2PDFApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 for i, fpath in enumerate(self.file_list):
                     base_name = os.path.splitext(os.path.basename(fpath))[0]
                     target_dir = custom_out_dir if custom_out_dir else os.path.dirname(fpath)
-                    out_pdf = os.path.join(target_dir, f"{base_name}.pdf")
-                    self._update_status_safe(f"状态：正在转换 ({i+1}/{len(self.file_list)}): {os.path.basename(fpath)} ...")
-                    convert_single_file(fpath, out_pdf, cfg)
+
+                    if export_format in ["pdf", "both"]:
+                        out_pdf = os.path.join(target_dir, f"{base_name}.pdf")
+                        self._update_status_safe(f"状态：正在导出 PDF ({i+1}/{len(self.file_list)}): {os.path.basename(fpath)} ...")
+                        convert_single_file(fpath, out_pdf, cfg)
+                        last_out = out_pdf
+
+                    if export_format in ["docx", "both"]:
+                        out_docx = os.path.join(target_dir, f"{base_name}.docx")
+                        self._update_status_safe(f"状态：正在导出 Word ({i+1}/{len(self.file_list)}): {os.path.basename(fpath)} ...")
+                        convert_single_to_docx(fpath, out_docx, cfg)
+                        last_out = out_docx
+
                     success_count += 1
-                    last_out = out_pdf
             else:
                 first_name = os.path.splitext(os.path.basename(self.file_list[0]))[0]
                 target_dir = custom_out_dir if custom_out_dir else os.path.dirname(self.file_list[0])
-                merged_pdf = os.path.join(target_dir, f"{first_name}_合并长报告.pdf")
-                self._update_status_safe(f"状态：正在合并 {len(self.file_list)} 个章节文档并生成长报告...")
-                convert_merged_files(self.file_list, merged_pdf, cfg)
+
+                if export_format in ["pdf", "both"]:
+                    merged_pdf = os.path.join(target_dir, f"{first_name}_合并长报告.pdf")
+                    self._update_status_safe(f"状态：正在合并并生成长报告 PDF ({len(self.file_list)} 篇)...")
+                    convert_merged_files(self.file_list, merged_pdf, cfg)
+                    last_out = merged_pdf
+
+                if export_format in ["docx", "both"]:
+                    merged_docx = os.path.join(target_dir, f"{first_name}_合并长报告.docx")
+                    self._update_status_safe(f"状态：正在合并并生成长报告 Word ({len(self.file_list)} 篇)...")
+                    convert_merged_to_docx(self.file_list, merged_docx, cfg)
+                    last_out = merged_docx
+
                 success_count = len(self.file_list)
-                last_out = merged_pdf
         except Exception as e:
             error_msg = str(e)
 
         self.last_output_pdf = last_out
-        self.after(0, lambda: self._on_convert_finished(success_count, last_out, error_msg, mode))
+        self.after(0, lambda: self._on_convert_finished(success_count, last_out, error_msg, mode, export_format))
 
     def _update_status_safe(self, text):
         self.after(0, lambda: self.status_lbl.configure(text=text))
 
-    def _on_convert_finished(self, success_count, last_out, error_msg, mode):
+    def _on_convert_finished(self, success_count, last_out, error_msg, mode, export_format="pdf"):
         self.btn_convert.configure(state="normal", text="开始转换")
         if error_msg:
             self.status_lbl.configure(text=f"状态异常：{error_msg}")
             messagebox.showerror("转换失败", f"处理过程中发生错误:\n{error_msg}")
         else:
+            fmt_desc = "组文档 (PDF + Word)" if export_format == "both" else ("个 Word (.docx) 文档" if export_format == "docx" else "个 PDF 文档")
             if mode == "separate":
-                self.status_lbl.configure(text=f"状态：完成。已成功生成 {success_count} 个 PDF 文档。")
-                messagebox.showinfo("完成", f"批量转换完成！\n已成功生成 {success_count} 个 PDF 文档。")
+                self.status_lbl.configure(text=f"状态：完成。已成功生成 {success_count} {fmt_desc}。")
+                messagebox.showinfo("完成", f"批量转换完成！\n已成功生成 {success_count} {fmt_desc}。")
             else:
                 self.status_lbl.configure(text=f"状态：长报告合并完成: {os.path.basename(last_out)}")
                 messagebox.showinfo("完成", f"长报告合并成功！\n文件保存至:\n{last_out}")
@@ -1753,6 +2561,13 @@ def main():
     if len(sys.argv) > 1:
         cfg = load_config()
         args = sys.argv[1:]
+        export_docx = any(a in ["--docx", "-w", "--word"] for a in args)
+        export_both = any(a in ["--both", "-b"] for a in args)
+        if export_both:
+            cfg["export_format"] = "both"
+        elif export_docx:
+            cfg["export_format"] = "docx"
+
         md_files = [os.path.abspath(a) for a in args if os.path.isfile(a) and a.lower().endswith((".md", ".markdown"))]
         if not md_files:
             print("[WARN] 未检测到有效的 .md 文件。")
@@ -1760,8 +2575,12 @@ def main():
         for f in md_files:
             print(f"正在处理: {os.path.basename(f)} ...")
             try:
-                res = convert_single_file(f, None, cfg)
-                print(f"[SUCCESS] 导出成功: {res}")
+                if cfg.get("export_format", "pdf") in ["pdf", "both"]:
+                    res_p = convert_single_file(f, None, cfg)
+                    print(f"[SUCCESS] PDF 导出成功: {res_p}")
+                if cfg.get("export_format", "pdf") in ["docx", "both"]:
+                    res_d = convert_single_to_docx(f, None, cfg)
+                    print(f"[SUCCESS] Word 导出成功: {res_d}")
             except Exception as e:
                 print(f"[FAILED] 失败: {e}", file=sys.stderr)
     else:

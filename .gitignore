@@ -9,9 +9,11 @@ build/
 *.egg-info/
 *.spec
 
-# User generated PDF files (prevent committing private exports)
+# User generated PDF & Word files (prevent committing private exports)
 *.pdf
 !example.pdf
+*.docx
+!example.docx
 
 # IDE and Editor configurations
 .vscode/

@@ -1,5 +1,6 @@
 {
   "output_mode": "separate",
+  "export_format": "both",
   "last_output_dir": "",
   "page_orientation": "portrait",
   "page_margin": "standard",
